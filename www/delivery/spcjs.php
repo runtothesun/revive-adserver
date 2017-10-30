@@ -3243,7 +3243,7 @@ MAX_commonConstructSecureDeliveryUrl($aConf['file']['popup'], true).
 MAX_commonConstructDeliveryUrl($aConf['file']['popup'])."';
 
         var {$varprefix}pop=\"<\"+\"script type='text/javascript' \";
-        {$varprefix}pop+=\"src='\"+{$varprefix}p+\"?zoneid=\"+zoneid;
+        {$varprefix}pop+=\"src='\"+{$varprefix}p+\"?check=1&zoneid=\"+zoneid;
         {$varprefix}pop+=\"&amp;source=\"+escape({$varprefix}source)+\"&amp;r=\"+{$varprefix}r;" .
 ((!empty($additionalParams)) ? "\n        {$varprefix}spc+=\"{$additionalParams}\";" : '') . "
         if (window.location) {$varprefix}pop+=\"&amp;loc=\"+escape(window.location);
