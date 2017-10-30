@@ -3111,148 +3111,210 @@ OX_Delivery_Common_hook('postInit');
 }
 
 
-
-function MAX_javascriptToHTML($string, $varName, $output = true, $localScope = true)
-{
-$jsLines = array();
-$search[] = "\\"; $replace[] = "\\\\";
-$search[] = "\r"; $replace[] = '';
-$search[] = '"'; $replace[] = '\"';
-$search[] = "'"; $replace[] = "\\'";
-$search[] = '<'; $replace[] = '<"+"';
-$string = str_replace($search, $replace, $string);
-$lines = explode("\n", $string);
-foreach ($lines AS $line) {
-if(trim($line) != '') {
-$jsLines[] = $varName . ' += "' . trim($line) . '\n";';
-}
-}
-$buffer = (($localScope) ? 'var ' : '') . $varName ." = '';\n";
-$buffer .= implode("\n", $jsLines);
-if ($output == true) {
-$buffer .= "\ndocument.write({$varName});\n";
-}
-return $buffer;
-}
-function MAX_javascriptEncodeJsonField($string)
-{
-$string = addcslashes($string, "\\/\"\n\r\t");
-$string = str_replace("\x08", "\\b", $string);
-$string = str_replace("\x0C", "\\f", $string);
-return '"'.$string.'"';
-}
-
-
-function MAX_flashGetFlashObjectExternal()
+function MAX_querystringConvertParams()
 {
 $conf = $GLOBALS['_MAX']['CONF'];
-if (substr($conf['file']['flash'], 0, 4) == 'http') {
-$url = $conf['file']['flash'];
+$qs = $_SERVER['QUERY_STRING'];
+$dest = false;
+$destStr = $conf['var']['dest'] . '=';
+$pos = strpos($qs, $destStr);
+if ($pos === false) {
+$destStr = 'dest=';
+$pos = strpos($qs, $destStr);
+}
+if ($pos !== false) {
+$dest = urldecode(substr($qs, $pos + strlen($destStr)));
+$qs = substr($qs, 0, $pos);
+}
+$aGet = array();
+$paramStr = $conf['var']['params'] . '=';
+$paramPos = strpos($qs, $paramStr);
+if (is_numeric($paramPos)) {
+$qs = urldecode(substr($qs, $paramPos + strlen($paramStr)));
+$delim = $qs{0};
+if (is_numeric($delim)) {
+$delim = substr($qs, 1, $delim);
+}
+$qs = substr($qs, strlen($delim) + 1);
+MAX_querystringParseStr($qs, $aGet, $delim);
+$qPos = isset($aGet[$conf['var']['dest']]) ? strpos($aGet[$conf['var']['dest']], '?') : false;
+$aPos = isset($aGet[$conf['var']['dest']]) ? strpos($aGet[$conf['var']['dest']], '&') : false;
+if ($aPos && !$qPos) {
+$desturl = substr($aGet[$conf['var']['dest']], 0, $aPos);
+$destparams = substr($aGet[$conf['var']['dest']], $aPos+1);
+$aGet[$conf['var']['dest']] = $desturl . '?' . $destparams;
+}
 } else {
-$url = MAX_commonGetDeliveryUrl($conf['file']['flash']);
+parse_str($qs, $aGet);
 }
-return "<script type='text/javascript' src='{$url}'></script>";
+if ($dest !== false) {
+$aGet[$conf['var']['dest']] = $dest;
 }
-function MAX_flashGetFlashObjectInline()
+$n = isset($_GET[$conf['var']['n']]) ? $_GET[$conf['var']['n']] : '';
+if (empty($n)) {
+$n = isset($aGet[$conf['var']['n']]) ? $aGet[$conf['var']['n']] : '';
+}
+if (!empty($n) && !empty($_COOKIE[$conf['var']['vars']][$n])) {
+$aVars = json_decode($_COOKIE[$conf['var']['vars']][$n], true);
+if (is_array($aVars)) {
+foreach ($aVars as $name => $value) {
+if (!isset($_GET[$name])) {
+$aGet[$name] = $value;
+}
+}
+}
+}
+$_GET = $aGet;
+$_REQUEST = $_GET + $_POST + $_COOKIE;
+}
+function MAX_querystringGetDestinationUrl($adId = null)
 {
 $conf = $GLOBALS['_MAX']['CONF'];
-if (substr($conf['file']['flash'], 0, 4) == 'http') {
-if (file_exists(MAX_PATH . '/www/delivery/' . basename($conf['file']['flash']))) {
-return file_get_contents(MAX_PATH . '/www/delivery/' . basename($conf['file']['flash']));
-} else {
-return @file_get_contents($conf['file']['flash']);
+$dest = isset($_REQUEST[$conf['var']['dest']]) ? $_REQUEST[$conf['var']['dest']] : '';
+if (empty($dest) && !empty($adId)) {
+$aAd = MAX_cacheGetAd($adId);
+if (!empty($aAd)) {
+$dest = $aAd['url'];
 }
-} elseif (file_exists(MAX_PATH . '/www/delivery/' . $conf['file']['flash'])) {
-return file_get_contents(MAX_PATH . '/www/delivery/' . $conf['file']['flash']);
+}
+if (empty($dest)) {
+return;
+}
+$aVariables = array();
+$aValidVariables = array_values($conf['var']);
+$componentParams = OX_Delivery_Common_hook('addUrlParams', array(array('bannerid' => $adId)));
+if (!empty($componentParams) && is_array($componentParams)) {
+foreach ($componentParams as $params) {
+if (!empty($params) && is_array($params)) {
+foreach ($params as $key => $value) {
+$aValidVariables[] = $key;
+}
+}
+}
+}
+$destParams = parse_url($dest);
+if (!empty($destParams['query'])) {
+$destQuery = explode('&', $destParams['query']);
+if (!empty($destQuery)) {
+foreach ($destQuery as $destPair) {
+list($destName, $destValue) = explode('=', $destPair);
+$aValidVariables[] = $destName;
+}
+}
+}
+foreach ($_GET as $name => $value) {
+if (!in_array($name, $aValidVariables)) {
+$aVariables[] = $name . '=' . $value;
+}
+}
+foreach ($_POST as $name => $value) {
+if (!in_array($name, $aValidVariables)) {
+$aVariables[] = $name . '=' . $value;
+}
+}
+if (!empty($aVariables)) {
+$dest .= ((strpos($dest, '?') > 0) ? '&' : '?') . implode('&', $aVariables);
+}
+return $dest;
+}
+function MAX_querystringParseStr($qs, &$aArr, $delim = '&')
+{
+$aArr = $_GET;
+$aElements = explode($delim, $qs);
+foreach($aElements as $element) {
+$len = strpos($element, '=');
+if ($len !== false) {
+$name = substr($element, 0, $len);
+$value = substr($element, $len+1);
+$aArr[$name] = urldecode($value);
+}
 }
 }
 
-MAX_commonRegisterGlobalsArray(array('id'));
-$output = OA_SPCGetJavaScript($id);
-MAX_commonSendContentTypeHeader("application/x-javascript");
-header("Expires: ".gmdate('r', time() + 86400));
+MAX_commonSetNoCacheHeaders();
+MAX_querystringConvertParams();
+MAX_commonRemoveSpecialChars($_REQUEST);
+$viewerId = MAX_cookieGetUniqueViewerID();
+if (!empty($GLOBALS['_MAX']['COOKIE']['newViewerId']) && empty($_GET[$conf['var']['cookieTest']])) {
+MAX_cookieSetViewerIdAndRedirect($viewerId);
+}
+$adId = isset($_REQUEST[$conf['var']['adId']]) ? explode($GLOBALS['_MAX']['MAX_DELIVERY_MULTIPLE_DELIMITER'], $_REQUEST[$conf['var']['adId']]) : array();
+$zoneId = isset($_REQUEST[$conf['var']['zoneId']]) ? explode($GLOBALS['_MAX']['MAX_DELIVERY_MULTIPLE_DELIMITER'], $_REQUEST[$conf['var']['zoneId']]) : array();
+$creativeId = isset($_REQUEST[$conf['var']['creativeId']]) ? explode($GLOBALS['_MAX']['MAX_DELIVERY_MULTIPLE_DELIMITER'], $_REQUEST[$conf['var']['creativeId']]) : array();
+$lastClick = isset($_REQUEST[$conf['var']['lastClick']]) ? explode($GLOBALS['_MAX']['MAX_DELIVERY_MULTIPLE_DELIMITER'], $_REQUEST[$conf['var']['lastClick']]) : array();
+$aBlockLoggingClick = isset($_REQUEST[$conf['var']['blockLoggingClick']]) ? $_REQUEST[$conf['var']['blockLoggingClick']] : array();
+if (!empty($conf['deliveryLog']['enabled'])) {
+foreach ($adId as $k => $v) {
+OX_Delivery_logMessage('$adId['.$k.']='.$v, 7);
+}
+foreach ($zoneId as $k => $v) {
+OX_Delivery_logMessage('$zoneId['.$k.']='.$v, 7);
+}
+foreach ($creativeId as $k => $v) {
+OX_Delivery_logMessage('$creativeId['.$k.']='.$v, 7);
+}
+foreach ($lastClick as $k => $v) {
+OX_Delivery_logMessage('$lastClick['.$k.']='.$v, 7);
+}
+foreach ($aBlockLoggingClick as $k => $v) {
+OX_Delivery_logMessage('$aBlockLoggingClick['.$k.']='.$v, 7);
+}
+}
+if (empty($adId) && !empty($zoneId)) {
+foreach ($zoneId as $index => $zone) {
+$adId[$index] = _getZoneAd($zone);
+$creativeId[$index] = 0;
+}
+}
+for ($i = 0; $i < count($adId); $i++) {
+$adId[$i] = intval($adId[$i]);
+$zoneId[$i] = intval($zoneId[$i]);
+if (isset($creativeId[$i])) {
+$creativeId[$i] = intval($creativeId[$i]);
+} else {
+$creativeId[$i] = 0;
+}
+if (($adId[$i] > 0 || $adId[$i] == -1) && ($conf['logging']['adClicks']) && !(isset($_GET['log']) && ($_GET['log'] == 'no'))) {
+if (MAX_commonIsAdActionBlockedBecauseInactive($adId[$i])) {
+return;
+}
+if (!MAX_Delivery_log_isClickBlocked($adId[$i], $aBlockLoggingClick)) {
+if (isset($GLOBALS['conf']['logging']['blockAdClicksWindow']) && $GLOBALS['conf']['logging']['blockAdClicksWindow'] != 0) {
+MAX_Delivery_log_setClickBlocked($i, $adId);
+}
+MAX_Delivery_log_logAdClick($adId[$i], $zoneId[$i]);
+MAX_Delivery_log_setLastAction($i, $adId, $zoneId, $lastClick, 'click');
+}
+}
+}
+MAX_cookieAdd($conf['var']['viewerId'], $viewerId, time() + $conf['cookie']['permCookieSeconds']);
 MAX_cookieFlush();
-echo $output;
-function OA_SPCGetJavaScript($affiliateid)
+$destination = MAX_querystringGetDestinationUrl($adId[0]);
+if (!empty($destination) && empty($_GET['trackonly'])) {
+if (!preg_match('/[\r\n]/', $destination)) {
+MAX_redirect($destination);
+}
+}
+function _getZoneAd($zoneId)
 {
-$aConf = $GLOBALS['_MAX']['CONF'];
-$varprefix = $aConf['var']['prefix'];
-$aZones = OA_cacheGetPublisherZones($affiliateid);
-foreach ($aZones as $zoneid => $aZone) {
-$zones[$aZone['type']][] = "            '" . addslashes($aZone['name']) . "' : {$zoneid}";
+$conf = $GLOBALS['conf'];
+$zoneLinkedAds = MAX_cacheGetZoneLinkedAds($zoneId, false);
+if (!empty($zoneLinkedAds['xAds']) && count($zoneLinkedAds['xAds']) == 1) {
+reset($zoneLinkedAds['xAds']);
+list($adId, $ad) = each($zoneLinkedAds['xAds']);
+} elseif (!empty($zoneLinkedAds['ads']) && count($zoneLinkedAds['ads']) == 1) {
+reset($zoneLinkedAds['ads']);
+foreach($zoneLinkedAds['ads'] as $priority => $ads) {
+foreach($ads as $adId => $ad) {
+break;
 }
-$additionalParams = '';
-$magic_quotes_gpc = ini_get('magic_quotes_gpc');
-foreach ($_GET as $key => $value) {
-if ($key == 'id') { continue; }
-if ($magic_quotes_gpc) { $value = stripslashes($value); }
-$additionalParams .= htmlspecialchars('&'.urlencode($key).'='.urlencode($value), ENT_QUOTES);
 }
-$script = "
-    if (typeof({$varprefix}zones) != 'undefined') {
-        var {$varprefix}zoneids = '';
-        for (var zonename in {$varprefix}zones) {$varprefix}zoneids += escape(zonename+'=' + {$varprefix}zones[zonename] + \"|\");
-        {$varprefix}zoneids += '&amp;nz=1';
-    } else {
-        var {$varprefix}zoneids = escape('" . implode('|', array_keys($aZones)) . "');
-    }
-
-    if (typeof({$varprefix}source) == 'undefined') { {$varprefix}source = ''; }
-    var {$varprefix}p=location.protocol=='https:'?'".
-MAX_commonConstructSecureDeliveryUrl($aConf['file']['singlepagecall'], true).
-"':'".
-MAX_commonConstructDeliveryUrl($aConf['file']['singlepagecall'])."';
-    var {$varprefix}r=Math.floor(Math.random()*99999999);
-    {$varprefix}output = new Array();
-
-    var {$varprefix}spc=\"<\"+\"script type='text/javascript' \";
-    {$varprefix}spc+=\"src='\"+{$varprefix}p+\"?zones=\"+{$varprefix}zoneids;
-    {$varprefix}spc+=\"&amp;source=\"+escape({$varprefix}source)+\"&amp;r=\"+{$varprefix}r;" .
-((!empty($additionalParams)) ? "\n    {$varprefix}spc+=\"{$additionalParams}\";" : '') . "
-    ";
-if (empty($_GET['charset'])) {
-$script .= "{$varprefix}spc+=(document.charset ? '&amp;charset='+document.charset : (document.characterSet ? '&amp;charset='+document.characterSet : ''));\n";
+} elseif (!empty($zoneLinkedAds['lAds']) && count($zoneLinkedAds['lAds']) == 1) {
+reset($zoneLinkedAds['lAds']);
+list($adId, $ad) = each($zoneLinkedAds['lAds']);
 }
-$script .= "
-    if (window.location) {$varprefix}spc+=\"&amp;loc=\"+escape(window.location);
-    if (document.referrer) {$varprefix}spc+=\"&amp;referer=\"+escape(document.referrer);
-    {$varprefix}spc+=\"'><\"+\"/script>\";
-    document.write({$varprefix}spc);
-
-    function {$varprefix}show(name) {
-        if (typeof({$varprefix}output[name]) == 'undefined') {
-            return;
-        } else {
-            document.write({$varprefix}output[name]);
-        }
-    }
-
-    function {$varprefix}showpop(name) {
-        zones = window.{$varprefix}zones ? window.{$varprefix}zones : false;
-        var zoneid = name;
-        if (typeof(window.{$varprefix}zones) != 'undefined') {
-            if (typeof(zones[name]) == 'undefined') {
-                return;
-            }
-            zoneid = zones[name];
-        }
-
-        {$varprefix}p=location.protocol=='https:'?'".
-MAX_commonConstructSecureDeliveryUrl($aConf['file']['popup'], true).
-"':'".
-MAX_commonConstructDeliveryUrl($aConf['file']['popup'])."';
-
-        var {$varprefix}pop=\"<\"+\"script type='text/javascript' \";
-        {$varprefix}pop+=\"src='\"+{$varprefix}p+\"?zoneid=\"+zoneid;
-        {$varprefix}pop+=\"&amp;source=\"+escape({$varprefix}source)+\"&amp;r=\"+{$varprefix}r;" .
-((!empty($additionalParams)) ? "\n        {$varprefix}spc+=\"{$additionalParams}\";" : '') . "
-        if (window.location) {$varprefix}pop+=\"&amp;loc=\"+escape(window.location);
-        if (document.referrer) {$varprefix}pop+=\"&amp;referer=\"+escape(document.referrer);
-        {$varprefix}pop+=\"'><\"+\"/script>\";
-
-        document.write({$varprefix}pop);
-    }
-";
-$script .= MAX_javascriptToHTML(MAX_flashGetFlashObjectExternal(), $varprefix . 'fo');
-return $script;
+if (!empty($ad['url'])) {
+$_REQUEST[$conf['var']['dest']] = $ad['url'];
+}
+return $adId;
 }
